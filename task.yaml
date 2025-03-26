@@ -1,0 +1,33 @@
+select_relevant_schema_task:
+  description: >
+    Give me a list of tables and columns from database that helps to answer the following question:    
+    {user_question}
+  expected_output: >
+    Json of tables containing the table name, columnas and their data types.
+
+
+select_relevant_column_values:
+  description: >
+    Sample string columns in the database and search for values that help to answer the following question:
+    {user_question}
+
+  expected_output: >
+    List only the relevant values in json format.
+
+
+decompose_question_task:
+  description: >
+    Generate SQL queries that helps to answer the following question:
+    {user_question}
+  expected_output: >
+    A list of sql queries that helps to answer the question
+
+  
+refine_sql_task:
+  description: >
+    Execute the given queries to answer the following question:
+    {user_question}
+    In case of error, fix them.
+  expected_output: >
+    Full Answer markdown formatted and step by step logical approach to reach the final answer of the question.
+    Do not interpret the findings. Just provide the SQL queries and the results.
