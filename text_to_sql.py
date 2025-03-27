@@ -1,20 +1,16 @@
-# Text-to-SQL Agents in Relational Databases with CrewAI
-
+# Text-to-SQL using LangChain
 import os
 import numpy as np
 import mysql.connector
 import pandas as pd
 from sqlalchemy import create_engine, text
-from crewai.tools import tool
-from crewai import Agent, Crew, Process, Task, agent
-# from crewai.crew import CrewBase
 import re
+import streamlit as st
 from langchain_openai import ChatOpenAI
 from typing import ClassVar 
 from mysql.connector import Error
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
-
 
 # Connect to the Mysql database
 def connect_to_db() -> mysql.connector.MySQLConnection:
@@ -24,113 +20,21 @@ def connect_to_db() -> mysql.connector.MySQLConnection:
             user='root',
             password='password',
             database="Gaya.ai"
-
         )
         if connection.is_connected():
             print(f"Connected to MySQL {connection.database}")
             return connection
     except Error as e:
         print("Error while connecting to MySQL", e)
-
+        return None
 
 # Connect to the Mysql database
 __db_url = f'mysql+pymysql://root:password@localhost:3306/Gaya.ai'
 ENGINE = create_engine(__db_url)
 
 # Define OpenAI API key
-#OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-# OPENAI_API_KEY="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"
-
-# create our tool to query the database
-OPENAI_API_KEY=""
-
-# @tool("execute_database")
-def execute_database_query(query: str) -> str:
-     """Query the Gaya.ai MySql database and return the results as a string.
-
-    Args:
-        query (str): The SQL query to execute.
-
-    Returns:
-        str: The results of the query as a string, where each row is separated by a newline.
-
-    Raises:
-        Exception: If the query is invalid or encounters an exception during execution.
-    """
-     with ENGINE.connect() as connection:
-        try:
-            res = connection.execute(text(query))
-        except Exception as e:
-            return f'Wrong query, encountered exception {e}.'
-
-        max_result_len = 1000
-        ret = '\n'.join(", ".join(map(str, result)) for result in res)
-        if len(ret) > max_result_len:
-            ret = ret[:max_result_len] + '...\n(results too long. Output truncated.)'
-        return ret
-
-# @CrewBase
-class MacSqlCrew(Crew):
-
-    # Load the files from the config directory
-    # agents_config = 'agents.yaml'
-    # tasks_config = 'tasks.yaml'
-    agents_config: ClassVar[str] = 'agents.yaml'
-    tasks_config: ClassVar[str] = 'tasks.yaml'
-
-    def __init__(self, **kwargs):
-        # Initialize with OpenAI model
-        llm = ChatOpenAI(
-            openai_api_key=OPENAI_API_KEY,
-            model_name="gpt-4-turbo",
-            temperature=0
-        )
-        super().__init__(llm=llm, **kwargs)
-    
-    '''
-    @agent
-    def selector_agent(self) -> Agent:
-        a = Agent(
-            config=self.agents_config['selector_agent'],
-            llm=self.llm,
-            allow_delegation=False,
-            verbose=True,
-            tools=[
-                execute_database_query, 
-            ]
-        )
-        return a
-    '''
-
-@tool('get_tables_from_database')
-def get_tables_from_database_tool() -> str:
-    """
-    Retrieves a list of table names from the public schema of the connected database.
-
-    Returns:
-        str: A string containing a list of table names, each on a new line in the format:
-             (Table: table_name)
-             If an error occurs during execution, it returns an error message instead.
-
-    Raises:
-        Exception: If there's an error executing the SQL query, the exception is caught
-                   and returned as a string message.
-    """
-    
-    query = "SELECT table_name FROM information_schema.tables WHERE table_schema='Gaya.ai';"
-    with ENGINE.connect() as connection:
-        try:
-            res = connection.execute(text(query))
-        except Exception as e:
-            return f'Wrong query, encountered exception {e}.'
-        
-    tables = []
-    for table in res:
-        table = re.findall(r'[a-zA-Z]+', str(table))[0]
-        tables.append(f'(Table: {table})\n')
-    return ''.join(tables)
-
-def _get_tables_from_database() -> str:
+OPENAI_API_KEY="your_openai_api_key_here"
+def get_tables_from_database() -> str:
     """
     Retrieves a list of table names from the database.
     """
@@ -147,25 +51,10 @@ def _get_tables_from_database() -> str:
         tables.append(f'(Table: {table})\n')
     return ''.join(tables)
 
-# Use this function in your main code
-get_tables_from_database = _get_tables_from_database
-
-@tool('get_schema_of_given_table')
-def get_schema_of_given_table(
-    table_name: str
-) -> str:
+def get_schema_of_given_table(table_name: str) -> str:
     """
     Retrieves the schema information for a given table from the database.
-
-    Args:
-        table_name (str): The name of the table for which to retrieve the schema information.
-
-    Returns:
-        str: A string containing the schema information, with each column on a new line in the format:
-             (Column: column_name, Data Type: data_type)
-             If an error occurs during execution, it returns an error message instead.
     """
-
     query = f"SELECT column_name, data_type FROM information_schema.columns WHERE table_name = '{table_name}'"
     with ENGINE.connect() as connection:
         try:
@@ -178,24 +67,10 @@ def get_schema_of_given_table(
         columns.append(f'(Column: {column}, Data Type:{data_type})\n')
     return ''.join(columns)
 
-
-@tool('get_distinct_column_values')
-def get_distinct_column_values(
-    table_name: str,
-    column: str
-) -> str:
+def get_distinct_column_values(table_name: str, column: str) -> str:
     """
     Retrieves distinct values from a specified column in a given table.
-
-    Args:
-        table_name (str): The name of the table to query.
-        column (str): The name of the column to retrieve distinct values from.
-
-    Returns:
-        str: A string containing the distinct values, each formatted as "(Value: <value>)\n".
-             If an error occurs during query execution, it returns an error message.
     """
-    
     query = f'SELECT DISTINCT {column} FROM {table_name};'
     with ENGINE.connect() as connection:
         try:
@@ -305,43 +180,40 @@ def simple_ask_database_question(question: str) -> str:
         
         return f"No SQL query could be extracted from the model's response. Here's the analysis:\n\n{suggested_query_and_analysis}"
 
-if __name__ == "__main__":
-    # First check database connection
+# Streamlit UI
+def main():
+    st.set_page_config(page_title="Gaya.ai - Text to SQL", layout="wide")
+    
+    st.title("Welcome to Gaya.ai")
+    st.header("Ask Your Questions")
+    st.markdown("This is a simple text-to-SQL agent that can help you query the Gaya.ai database.")
+    
+    # Check database connection
     db_connection = connect_to_db()
-    if db_connection:
-        print("Database connection established successfully.")
-        db_connection.close()
-        
-        # Example 1: List all tables
-        print("\nListing all tables in the database:")
-        tables = get_tables_from_database()
-        print(tables)
-        
-        # Example 2: Ask a question
-        question = "How many records are in the 'ImageData' table in the Gaya.ai database?"
-        print(f"\nQuestion: {question}")
-        answer = simple_ask_database_question(question)
-        print(f"Answer: {answer}")
-        
-        # Example 3: More complex question
-        question = "What are the top 5 most common values in the 'ImageData' table in the Gaya.ai database?"
-        print(f"\nQuestion: {question}")
-        answer = simple_ask_database_question(question)
-        print(f"Answer: {answer}")
-
-        while True:
-        
-            user_question = input("\nEnter your question about the database: ")
+    if not db_connection:
+        st.error("⚠️ Could not connect to the database. Please check your database connection.")
+        return
+    db_connection.close()
+    
+    user_question = st.text_input("Enter your question here:")
+    
+    if st.button("Submit", key="submit_button"):
+        if not user_question:
+            st.warning("Please enter a question.")
+            return
             
-            # Check if user wants to exit
-            if user_question.lower() in ['exit', 'quit', 'q']:
-                print("Exiting the program. Goodbye!")
-                break
-            
-            # Process the question
-            print(f"\nProcessing question: {user_question}")
+        with st.spinner("Processing your question..."):
             try:
                 answer = simple_ask_database_question(user_question)
-                print(f"\nAnswer: {answer}")
+                st.write("### Answer")
+                st.write(answer)
             except Exception as e:
-                print(f"Error processing question: {e}")
+                st.error(f"Error processing question: {e}")
+
+if __name__ == "__main__":
+    main()
+
+
+
+
+

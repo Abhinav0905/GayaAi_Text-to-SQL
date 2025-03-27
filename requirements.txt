@@ -1,0 +1,15 @@
+numpy
+mysql-connector-python
+pandas
+sqlalchemy
+langchain-openai
+langchain-core
+streamlit
+pymysql
+numpy
+mysql-connector-python
+pandas
+sqlalchemy
+langchain-openai
+streamlit
+langchain-core
