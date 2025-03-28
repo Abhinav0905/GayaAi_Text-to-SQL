@@ -11,15 +11,29 @@ from typing import ClassVar
 from mysql.connector import Error
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
+from dotenv import load_dotenv
 
-# Connect to the Mysql database
+# Load environment variables from .env file if present
+load_dotenv()
+
+# Get database connection parameters from environment variables with fallbacks
+DB_HOST = os.environ.get('DB_HOST', 'database-1-instance-1.ctg4uio0ox0p.us-east-2.rds.amazonaws.com')
+DB_USER = os.environ.get('DB_USER', 'admin')
+DB_PASSWORD = os.environ.get('DB_PASSWORD', 'password')
+DB_NAME = os.environ.get('DB_NAME', 'Gaya')
+DB_PORT = os.environ.get('DB_PORT', '3306')
+
+# Get OpenAI API key from environment variable
+OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY', 'your_openai_api_key_here')
+
+# Connect to the MySQL database
 def connect_to_db() -> mysql.connector.MySQLConnection:
     try:
         connection = mysql.connector.connect(
-            host='localhost',
-            user='root',
-            password='password',
-            database="Gaya.ai"
+            host=DB_HOST,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            database=DB_NAME
         )
         if connection.is_connected():
             print(f"Connected to MySQL {connection.database}")
@@ -28,17 +42,15 @@ def connect_to_db() -> mysql.connector.MySQLConnection:
         print("Error while connecting to MySQL", e)
         return None
 
-# Connect to the Mysql database
-__db_url = f'mysql+pymysql://root:password@localhost:3306/Gaya.ai'
+# Create SQLAlchemy engine
+__db_url = f'mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}'
 ENGINE = create_engine(__db_url)
 
-# Define OpenAI API key
-OPENAI_API_KEY="your_openai_api_key_here"
 def get_tables_from_database() -> str:
     """
     Retrieves a list of table names from the database.
     """
-    query = "SELECT table_name FROM information_schema.tables WHERE table_schema='Gaya.ai';"
+    query = f"SELECT table_name FROM information_schema.tables WHERE table_schema='{DB_NAME}';"
     with ENGINE.connect() as connection:
         try:
             res = connection.execute(text(query))
@@ -114,9 +126,44 @@ def simple_ask_database_question(question: str) -> str:
     # First get database tables
     tables = get_tables_from_database()
     
-    # Get schema for ImageData table
-    schema = get_table_schema('ImageData')
-    print(f"\nTable Schema:\n{schema}")
+    # Create a prompt to determine which table to use
+    table_selection_prompt = ChatPromptTemplate.from_template("""
+    You are an expert SQL database analyst. I need you to identify the most relevant table for this question.
+    
+    The database has the following tables:
+    {tables}
+    
+    User's question: {question}
+    
+    Return only the name of the most relevant table, with no additional text or explanation.
+    """)
+    
+    # Create a chain to select the table
+    table_selection_chain = (
+        table_selection_prompt 
+        | ChatOpenAI(openai_api_key=OPENAI_API_KEY, model_name="gpt-4-turbo") 
+        | StrOutputParser()
+    )
+    
+    # Run the chain to get the relevant table name
+    try:
+        relevant_table = table_selection_chain.invoke({
+            "tables": tables, 
+            "question": question
+        }).strip()
+        
+        # Clean up the table name (remove any extra characters, quotes, etc.)
+        relevant_table = re.sub(r'[^a-zA-Z0-9_]', '', relevant_table)
+        print(f"Selected table: {relevant_table}")
+        
+        # Get schema for the selected table
+        schema = get_table_schema(relevant_table)
+        print(f"\nTable Schema:\n{schema}")
+    except Exception as e:
+        # Fallback to ImageData if there's an error determining the table
+        relevant_table = 'ImageData'
+        schema = get_table_schema(relevant_table)
+        print(f"Error determining relevant table: {e}. Falling back to {relevant_table}")
     
     # Create a prompt
     prompt = ChatPromptTemplate.from_template("""
@@ -125,7 +172,7 @@ def simple_ask_database_question(question: str) -> str:
     The database has the following tables:
     {tables}
     
-    The ImageData table has this schema:
+    The {table_name} table has this schema:
     {schema}
     
     User's question: {question}
@@ -145,6 +192,7 @@ def simple_ask_database_question(question: str) -> str:
     # Run the chain
     suggested_query_and_analysis = chain.invoke({
         "tables": tables,
+        "table_name": relevant_table,
         "schema": schema,
         "question": question
     })
@@ -188,12 +236,26 @@ def main():
     st.header("Ask Your Questions")
     st.markdown("This is a simple text-to-SQL agent that can help you query the Gaya.ai database.")
     
+    # Display connection info (excluding password)
+    if st.sidebar.checkbox("Show Connection Info", False):
+        st.sidebar.write(f"Database Host: {DB_HOST}")
+        st.sidebar.write(f"Database Name: {DB_NAME}")
+        st.sidebar.write(f"Database User: {DB_USER}")
+        st.sidebar.write(f"Database Port: {DB_PORT}")
+    
     # Check database connection
-    db_connection = connect_to_db()
-    if not db_connection:
-        st.error("⚠️ Could not connect to the database. Please check your database connection.")
+    try:
+        db_connection = connect_to_db()
+        if not db_connection:
+            st.error("⚠️ Could not connect to the database. Please check your database connection parameters.")
+            st.info("Make sure your EC2 security group allows connections to the RDS database.")
+            return
+        db_connection.close()
+        st.success("✅ Connected to database successfully!")
+    except Exception as e:
+        st.error(f"⚠️ Database connection error: {e}")
+        st.info("Please check your database connection parameters and network settings.")
         return
-    db_connection.close()
     
     user_question = st.text_input("Enter your question here:")
     
@@ -209,6 +271,7 @@ def main():
                 st.write(answer)
             except Exception as e:
                 st.error(f"Error processing question: {e}")
+                st.info("This might be due to API key issues or database connectivity problems.")
 
 if __name__ == "__main__":
     main()
